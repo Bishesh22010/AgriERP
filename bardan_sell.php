@@ -5,6 +5,7 @@ error_reporting(E_ALL);
 
 require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/media_handler.php';
 
 $message = '';
 $msg_type = '';
@@ -24,6 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $number_of_bardans = (int)$_POST['number_of_bardans'];
     $used_for          = $_POST['used_for'];
     $remarks           = trim($_POST['remarks']);
+    $signature_base64  = $_POST['signature_base64'] ?? ''; // NEW: Capture signature data
     $created_by        = $_SESSION['user_id'];
 
     // Step A: Calculate Financial Year (April to March)
@@ -59,19 +61,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $max_bill = $stmtBillNo->fetchColumn();
         $yearly_bill_no = $max_bill ? $max_bill + 1 : 1;
 
-        // Step D: Insert into Bardan Sell Table
+        // Step D: Save Signature if provided
+        $signature_path = null;
+        if (!empty($signature_base64)) {
+            $signature_path = saveBase64Image($signature_base64, 'signatures');
+        }
+
+        // Step E: Insert into Bardan Sell Table (Updated with signature fields)
         $stmt = $pdo->prepare("
             INSERT INTO bardan_sell 
-            (yearly_bill_no, bill_year, sell_date, farmer_id, number_of_bardans, used_for, remarks, created_by) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (yearly_bill_no, bill_year, sell_date, farmer_id, number_of_bardans, used_for, remarks, signature_path, signed_at, created_by) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
         ");
         $stmt->execute([
             $yearly_bill_no, $bill_year, $sell_date, $farmer_id, 
-            $number_of_bardans, $used_for, $remarks, $created_by
+            $number_of_bardans, $used_for, $remarks, $signature_path, $created_by
         ]);
         $sell_id = $pdo->lastInsertId();
 
-        // Step E: Insert into Stock Ledger (Auto Stock Deduction)
+        // Step F: Insert into Stock Ledger (Auto Stock Deduction)
         $stmtLedger = $pdo->prepare("
             INSERT INTO bardan_stock_ledger 
             (transaction_type, reference_id, quantity, transaction_date) 
@@ -79,7 +87,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         ");
         $stmtLedger->execute([$sell_id, $number_of_bardans, $sell_date]);
 
-        // Step F: Audit Log
+        // Step G: Audit Log
         $stmtLog = $pdo->prepare("INSERT INTO audit_logs (user_id, action, module) VALUES (?, ?, 'Bardan Sell')");
         $stmtLog->execute([$created_by, "Sold {$number_of_bardans} Bardans to Farmer ID: {$farmer_id} (Bill: {$yearly_bill_no}/{$bill_year})"]);
 
@@ -137,7 +145,7 @@ require_once __DIR__ . '/includes/sidebar.php';
     .btn-sm { padding: 4px 8px; font-size: 11px; }
 
     .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 1000; justify-content: center; align-items: center; }
-    .modal-content { background: var(--card-bg); width: 100%; max-width: 600px; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+    .modal-content { background: var(--card-bg); width: 100%; max-width: 600px; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-height: 95vh; overflow-y: auto;}
     .modal-header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
     .modal-body { padding: 24px; }
     .modal-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; background: #faf9f8; }
@@ -265,7 +273,16 @@ require_once __DIR__ . '/includes/sidebar.php';
                     <textarea name="remarks" class="form-control" rows="2" placeholder="Optional details..."></textarea>
                 </div>
                 
-                <div style="background: #fff8e1; border-left: 3px solid #FFC107; padding: 10px; font-size: 12px; margin-top: 10px;">
+                <div style="border: 1px solid var(--border); border-radius: var(--radius); margin-top: 15px; overflow: hidden;">
+                    <div style="background: #f3f2f1; padding: 10px 15px; font-weight: 600; font-size: 13px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between;">
+                        <span>Digital Signature (ખેડૂતની સહી)</span>
+                        <button type="button" class="btn-sm btn-secondary" onclick="clearSignature()" style="font-size: 11px;">Clear</button>
+                    </div>
+                    <canvas id="sig-canvas" width="550" height="150" style="width: 100%; height: 150px; touch-action: none; background: #fff; cursor: crosshair; display: block;"></canvas>
+                    <input type="hidden" name="signature_base64" id="signature_base64">
+                </div>
+
+                <div style="background: #fff8e1; border-left: 3px solid #FFC107; padding: 10px; font-size: 12px; margin-top: 15px;">
                     <strong>Note:</strong> Bill Number will be auto-generated based on the financial year.
                 </div>
             </div>
@@ -279,7 +296,11 @@ require_once __DIR__ . '/includes/sidebar.php';
 
 <script>
     function openModal() { document.getElementById('addModal').style.display = 'flex'; }
-    function closeModal() { document.getElementById('addModal').style.display = 'none'; }
+    
+    function closeModal() { 
+        document.getElementById('addModal').style.display = 'none'; 
+        clearSignature(); // Wipe signature if they close without saving
+    }
 
     // Live search filtering
     function filterTable() {
@@ -295,6 +316,82 @@ require_once __DIR__ . '/includes/sidebar.php';
                 tr[i].style.display = "none";
             }
         }
+    }
+
+    // --- Signature Pad Logic (Tablet Optimized) ---
+    const canvas = document.getElementById('sig-canvas');
+    const ctx = canvas.getContext('2d');
+    let drawing = false;
+
+    // Set line styles for signature
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#005A9E'; // Enterprise Blue ink
+
+    function getMousePos(canvasDom, mouseEvent) {
+        let rect = canvasDom.getBoundingClientRect();
+        // Scale mouse coordinates to canvas coordinates (solves CSS width stretching issues)
+        let scaleX = canvasDom.width / rect.width;
+        let scaleY = canvasDom.height / rect.height;
+        return {
+            x: (mouseEvent.clientX - rect.left) * scaleX,
+            y: (mouseEvent.clientY - rect.top) * scaleY
+        };
+    }
+
+    function getTouchPos(canvasDom, touchEvent) {
+        let rect = canvasDom.getBoundingClientRect();
+        let scaleX = canvasDom.width / rect.width;
+        let scaleY = canvasDom.height / rect.height;
+        return {
+            x: (touchEvent.touches[0].clientX - rect.left) * scaleX,
+            y: (touchEvent.touches[0].clientY - rect.top) * scaleY
+        };
+    }
+
+    // Mouse Events (Desktop)
+    canvas.addEventListener("mousedown", function(e) {
+        drawing = true;
+        let mousePos = getMousePos(canvas, e);
+        ctx.beginPath();
+        ctx.moveTo(mousePos.x, mousePos.y);
+    }, false);
+    
+    canvas.addEventListener("mouseup", function(e) { drawing = false; updateHiddenSig(); }, false);
+    canvas.addEventListener("mousemove", function(e) {
+        if (!drawing) return;
+        let mousePos = getMousePos(canvas, e);
+        ctx.lineTo(mousePos.x, mousePos.y);
+        ctx.stroke();
+    }, false);
+
+    // Touch Events (Tablets/Phones)
+    canvas.addEventListener("touchstart", function(e) {
+        e.preventDefault(); // Prevent scrolling when signing
+        drawing = true;
+        let touchPos = getTouchPos(canvas, e);
+        ctx.beginPath();
+        ctx.moveTo(touchPos.x, touchPos.y);
+    }, { passive: false });
+
+    canvas.addEventListener("touchend", function(e) { drawing = false; updateHiddenSig(); }, false);
+    canvas.addEventListener("touchmove", function(e) {
+        e.preventDefault();
+        if (!drawing) return;
+        let touchPos = getTouchPos(canvas, e);
+        ctx.lineTo(touchPos.x, touchPos.y);
+        ctx.stroke();
+    }, { passive: false });
+
+    function clearSignature() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        document.getElementById('signature_base64').value = '';
+    }
+
+    function updateHiddenSig() {
+        // Save canvas as Base64 to hidden input for PHP processing
+        let dataUrl = canvas.toDataURL("image/png");
+        document.getElementById('signature_base64').value = dataUrl;
     }
 </script>
 

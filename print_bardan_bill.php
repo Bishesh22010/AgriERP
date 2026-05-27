@@ -127,6 +127,11 @@ $qty_bajri = ($bill['used_for'] === 'Bajri') ? toGujarati($bill['number_of_barda
         .sig-line { display: flex; align-items: flex-end; margin-bottom: 15px; }
         .sig-label { width: 45px; }
         .sig-value { flex: 1; border-bottom: 1px solid #a30015; }
+        .signature-img {
+            max-height: 45px;
+            margin-bottom: -8px; /* Pulls the image down to sit exactly on the line */
+            margin-left: 10px;
+        }
 
         /* =========================================
            PRINT SPECIFIC CSS
@@ -238,7 +243,11 @@ $qty_bajri = ($bill['used_for'] === 'Bajri') ? toGujarati($bill['number_of_barda
         <div class="footer-sig">
             <div class="sig-line">
                 <div class="sig-label">સહી</div>
-                <div class="sig-value"></div>
+                <div class="sig-value">
+                    <?php if (!empty($bill['signature_path']) && file_exists(__DIR__ . '/' . $bill['signature_path'])): ?>
+                        <img src="<?= htmlspecialchars($bill['signature_path']) ?>" class="signature-img" alt="Signature">
+                    <?php endif; ?>
+                </div>
             </div>
             <div class="sig-line">
                 <div class="sig-label">મો.નં.</div>

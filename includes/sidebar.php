@@ -12,6 +12,22 @@ $current_page = basename($_SERVER['PHP_SELF']);
             <span class="nav-icon">📊</span>
             <span class="nav-text">Dashboard</span>
         </a>
+        <a href="villages.php" class="nav-item <?= $current_page == 'villages.php' ? 'active' : '' ?>">
+            <span class="nav-icon">📍</span>
+            <span class="nav-text">Village Master</span>
+        </a>
+        <a href="farmers.php" class="nav-item <?= $current_page == 'farmers.php' ? 'active' : '' ?>">
+            <span class="nav-icon">👥</span>
+            <span class="nav-text">Farmer Master</span>
+        </a>
+        <a href="bardan_khatavahi.php" class="nav-item <?= $current_page == 'bardan_khatavahi.php' ? 'active' : '' ?>">
+            <span class="nav-icon">📖</span>
+            <span class="nav-text">Bardan Khatavahi</span>
+        </a>
+        <a href="havalo.php" class="nav-item <?= $current_page == 'havalo.php' ? 'active' : '' ?>">
+            <span class="nav-icon">🔄</span>
+            <span class="nav-text">Havalo System</span>
+        </a>
         <a href="bardan_purchase.php" class="nav-item <?= $current_page == 'bardan_purchase.php' ? 'active' : '' ?>">
             <span class="nav-icon">📥</span>
             <span class="nav-text">Bardan Purchase</span>
